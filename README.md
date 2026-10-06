@@ -94,7 +94,7 @@ pip install pyaudio‑0.2.14‑cp312‑cp312‑win_amd64.whl
 | `yfinance` | Precios de acciones desde Yahoo Finance. |
 | `pyjokes` | Generar chistes en espanol. |
 | `wikipedia` | Busquedas en Wikipedia. |
-| `webbrowser`, `datetime`, `sys`, `warnings`, `re` | Librerias estandar de Python (no se instalan). |
+| `webbrowser`, `datetime`, `re`, `unicodedata`, `unittest` | Librerias estandar de Python (no se instalan). |
 
 ---
 
@@ -132,91 +132,124 @@ Tambien podes cerrarlo en cualquier momento con `Ctrl + C` en la terminal.
 
 ---
 
-## Como funciona el codigo
+## Estructura del proyecto
 
-El archivo completo es `asistente.py`. Se explica por partes.
+La aplicacion esta dividida por funcionalidad (*feature-based*). Cada carpeta
+`features/...` es una funcionalidad completa con su logica y sus comandos, y el
+nucleo (`app/`) solo se ocupa de escuchar, guardar el estado y elegir a quien
+le toca responder.
 
-### 1. Imports y configuracion inicial (lineas 1-22)
+```text
+asistente.py               punto de entrada: crea el asistente y lo ejecuta
+app/
+  assistant.py             bucle de la conversacion y armado de la aplicacion
+  router.py                CommandRouter y la lista de comandos
+  session.py               estado de la conversacion (Session y Context)
+features/
+  hardware/                dominio principal: componentes y compatibilidad
+    data.py                  juegos, graficas y procesadores
+    models.py                HardwareProfile, Spec, GameRequirements, GpuSpec
+    parser.py                logica pura para leer RAM, GPU, CPU y juego del texto
+    compatibility.py         regla de minimos y recomendados
+    commands.py              comandos hablados de hardware
+  wikipedia/
+    errors.py                errores propios de la feature
+    client.py                consultas a Wikipedia
+    commands.py              comando de busqueda
+  datetime/
+    time.py                  mensajes que dependen del reloj
+    commands.py              comandos de hora y fecha
+  stocks/
+    quotes.py                precios de acciones (yfinance)
+    commands.py              comando de acciones
+  media/
+    playback.py              busqueda en internet y YouTube (pywhatkit)
+    commands.py              comandos de busqueda y cancion
+  browser/
+    commands.py              apertura de YouTube y Google
+  jokes/
+    jokes.py                 chistes en espanol (pyjokes)
+    commands.py              comando de chistes
+shared/
+  command.py                Command y KeywordCommand (contrato de los comandos)
+  text.py                   utilidades de texto
+  voice.py                  VoiceService: hablar (pyttsx3) y escuchar (speech_recognition)
+tests/
+  doubles.py                dobles de prueba compartidos
+  test_hardware.py          parser, modelos, compatibilidad y datos
+  test_text.py              utilidades de texto
+  test_datetime.py          mensajes que dependen del reloj
+  test_router.py            ruteo de pedidos a cada feature
+  test_assistant.py         bucle de la conversacion
+requirements.txt
+README.md
+```
 
-Se importan las librerias, se silencian advertencias (`warnings.filterwarnings`)
-y se fuerza la salida en UTF-8 (`sys.stdout.reconfigure`) para que los acentos y
-caracteres especiales no rompan la consola de Windows.
+### Responsabilidades
 
-- `voz_es`: ruta de la voz de Windows (ES-ES Helena). Se aplica al motor de voz.
-- `motor_voz = pyttsx3.init()`: se inicializa el motor de texto a voz **una sola vez**.
-- `reconocedor = sr.Recognizer()`: objeto que captura y transcribe audio.
-- `wikipedia.set_lang("es")` y `wikipedia.set_user_agent(...)`: Wikipedia en espanol
-  y un User-Agent propio, porque Wikipedia bloquea el que trae la libreria por defecto.
+| Parte | Que hace | Que no hace |
+|---|---|---|
+| `asistente.py` | Arranca la aplicacion. | No sabe de juegos ni de acciones. |
+| `app/assistant.py` | Bucle: saluda, escucha, resuelve y ejecuta. | No reconoce pedidos por su cuenta. |
+| `app/router.py` | Elige el comando que responde a un pedido. | No sabe que significa "rtx 3060" ni "wikipedia". |
+| `app/session.py` | Unico lugar donde vive el estado (equipo, componentes parciales). | No decide que hacer con el estado. |
+| `features/*/parser.py` | Convierte texto en datos del dominio. | No habla con el usuario ni con internet. |
+| `features/*/compatibility.py` | Decide si un equipo cumple los requisitos. | No guarda estado ni habla. |
+| `features/*/commands.py` | Conecta el pedido hablado con la feature. | No implementa la logica de dominio. |
+| `shared/voice.py` | Hablar y escuchar. | No decide que se responde. |
+| `shared/command.py` | Contrato `Command` y el comando genérico por palabras clave. | No sabe de que feature se trata. |
 
-### 2. Bases de datos (lineas 24-99)
+### Flujo principal
 
-- `JUEGOS`: diccionario de juegos. Cada juego guarda `"min"` (minimos) y `"rec"`
-  (recomendados), con 4 valores: `ram` y `vram` en GB, y `gpu`/`cpu` como nivel 1-10.
-- `GRAFICAS`: cada placa de video con su `nivel` (1-10) y su `vram` en GB.
-- `PROCESADORES`: cada procesador con su nivel (1-10).
+```text
+asistente.py
+  -> create_assistant()          arma router + features + voz
+    -> Assistant.run()           saluda y entra al bucle
+      -> voice.listen()          transcribe el pedido
+        -> router.resolve(text)  primer comando que lo reconoce
+          -> command.execute(context, text)
+            -> feature            (parser + dominio + voz)
+```
 
-Los niveles permiten comparar componentes de distinta generacion con un solo numero.
+Para agregar un comando nuevo se escribe su feature y se agrega una linea en
+`build_router()` (`app/router.py`). No hay que tocar el bucle ni el router.
 
-### 3. Funciones de compatibilidad (lineas 102-187)
+### Los comandos no dependen de las librerias
 
-- `juegos_disponibles()`: devuelve la lista de nombres de juegos cargados.
-- `buscar_grafica(nombre)`: busca una GPU por texto (ej. "rtx 3060" dentro de la frase)
-  y devuelve su nivel y VRAM.
-- `buscar_procesador(nombre)`: idem para CPU.
-- `crear_equipo(grafica, procesador, ram)`: arma el diccionario del equipo del usuario
-  con `{"ram", "vram", "gpu", "cpu"}`.
-- `comparar(equipo, juego)`: recorre los requisitos minimos y recomendados. Si supera
-  los recomendados devuelve calidad **alta**; si solo supera los minimos, calidad
-  **baja**; si no llega a los minimos, avisa que **no corre**.
-- `extraer_ram(texto)`: usa expresiones regulares (`re`) para encontrar la cantidad de
-  RAM en la frase, por ejemplo "16 de ram" o "8gb de ram".
-- `componentes_sueltos(texto)`: detecta en la frase SOLO los componentes que aparezcan
-  (GPU, CPU y/o RAM) y devuelve un diccionario parcial. Permite cargar los componentes
-  de a uno.
-- `detectar_juego(texto)`: busca en la frase el nombre de algun juego de la base.
-- `responder_juego(equipo, texto)`: detecta el juego y responde con `comparar`. Si no
-  hay juego o no hay componentes, avisa.
+Los comandos se arman con funciones simples que se pasan por parametro
+(`wikipedia_commands(summarize)`, `browser_commands(open_url)`, etc.). Las
+librerias reales se conectan en un unico lugar, `create_assistant()`
+(`app/assistant.py`). Por eso los tests pueden correr sin microfono, parlantes
+ni conexion a internet.
 
-### 4. Hora, fecha y saludo (lineas 190-212)
+Los `except Exception` quedan solo en los adaptadores que habla con una libreria
+(`client.py`, `quotes.py`, `playback.py`, `voice.py`) y devuelven un valor que el
+comando sabe traducir a un mensaje. El nucleo y los comandos no silencian
+errores internos.
 
-- `pedir_hora()`: toma `datetime.now()` y arma un texto con horas y minutos.
-- `pedir_dia()`: usa `weekday()` (0-6) y un diccionario para decir el dia de la semana.
-- `saludo_inicial()`: saluda segun la hora (Buen dia / Buenas tardes / Buenas noches).
+---
 
-### 5. Wikipedia (lineas 215-237)
+## Tests
 
-- `buscar_wikipedia(pedido)`: limpia la frase (saca "busca en wikipedia"), usa
-  `wikipedia.search()` para obtener el titulo mas parecido y `wikipedia.summary()` para
-  el resumen. Maneja errores: ambiguedad (`DisambiguationError`, lista opciones), pagina
-  inexistente (`PageError`) y fallos de red o limite de peticiones.
+Los tests usan `unittest` (viene con Python, no hace falta instalar nada) y no
+necesitan microfono, parlantes, navegador, Wikipedia ni `yfinance`: las
+dependencias se reemplazan por dobles de prueba.
 
-### 6. Voz y escucha (lineas 240-261)
+```bash
+python -m unittest discover -s tests -v
+```
 
-- `hablar(mensaje)`: imprime el texto y lo reproduce con `say()` + `runAndWait()`.
-- `transformar_audio_texto()`: abre el microfono, graba hasta detectar una pausa
-  (`pause_threshold = 0.8` segundos) y transcribe con Google en espanol
-  (`recognize_google(audio, language="es-ES")`). Si no entiende o no hay internet,
-  devuelve `"Sigo esperando"`.
+Que cubren:
 
-### 7. Acciones (lineas 264-310)
-
-- `reproducir_cancion(pedido)`: quita las palabras de comando y llama a
-  `pywhatkit.playonyt(cancion)` para reproducir en YouTube.
-- `consultar_accion(pedido)`: toma la empresa de la frase, la traduce a su ticker
-  bursatil usando el diccionario `cartera` y consulta el precio con `yfinance`.
-- `contar_chiste()`: obtiene un chiste en espanol con `pyjokes.get_joke("es")`.
-
-### 8. Bucle principal `centro_pedido()` (lineas 313-385)
-
-Es el corazon del asistente:
-
-1. Saluda con `saludo_inicial()`.
-2. Crea `equipo_usuario` (los componentes) y `datos_usuario` (componentes acumulados).
-3. Entra en un `while True`: en cada vuelta transcribe tu pedido y lo compara con una
-   cadena de `if / elif` para decidir que funcion ejecutar (hora, fecha, wikipedia,
-   abrir web, buscar, reproducir, acciones, chistes, juegos, componentes o despedida).
-4. Ignora los pedidos vacios o mal reconocidos (`"sigo esperando"`).
-5. Se cierra con "adios" o con `Ctrl + C` (capturado con `except KeyboardInterrupt`).
+- `test_hardware.py`: deteccion de RAM, GPU, CPU y juego en texto; todos los
+  modelos de la base; los tres casos de compatibilidad sobre cada juego; y
+  invariantes de los datos.
+- `test_text.py`: normalizacion, busqueda de palabras y limpieza de texto.
+- `test_datetime.py`: hora, dia de la semana y saludo en cada franja horaria.
+- `test_router.py`: cada pedido por voz cae en la feature correcta, el orden de
+  prioridad se respeta y los fallos de YouTube o Google se avisan.
+- `test_assistant.py`: el bucle completo (saludo, pedidos, fallback, despedida,
+  `Ctrl + C`) y los componentes dichos de a uno.
 
 ---
 
@@ -224,26 +257,26 @@ Es el corazon del asistente:
 
 ### Agregar un juego
 
-En el diccionario `JUEGOS` agrega una entrada:
+En `features/hardware/data.py`, dentro de `GAMES`, agrega una entrada:
 
 ```python
-"fifa 25": {
-    "min": {"ram": 8, "vram": 4, "gpu": 4, "cpu": 4},
-    "rec": {"ram": 16, "vram": 6, "gpu": 6, "cpu": 6},
-},
+"fifa 25": GameRequirements(
+    minimum=Spec(ram=8, vram=4, gpu=4, cpu=4),
+    recommended=Spec(ram=16, vram=6, gpu=6, cpu=6),
+),
 ```
 
 ### Agregar una placa de video
 
-En `GRAFICAS` agrega el modelo con su nivel y VRAM:
+En `features/hardware/data.py`, dentro de `GPUS`, agrega el modelo:
 
 ```python
-"rtx 4080": {"nivel": 9, "vram": 16},
+"rtx 4080": GpuSpec(level=9, vram=16),
 ```
 
 ### Agregar un procesador
 
-En `PROCESADORES` agrega el modelo con su nivel:
+En `features/hardware/data.py`, dentro de `CPUS`, agrega el modelo con su nivel:
 
 ```python
 "ryzen 7 7800x3d": 8,
@@ -251,11 +284,22 @@ En `PROCESADORES` agrega el modelo con su nivel:
 
 ### Agregar una accion
 
-En el diccionario `cartera` dentro de `consultar_accion` agrega la empresa:
+En `features/stocks/commands.py`, dentro de `TICKERS`, agrega la empresa:
 
 ```python
 "valve": "VALVE",
 ```
+
+### Agregar una funcionalidad nueva
+
+1. Crear la carpeta en `features/` con su logica de dominio y su `commands.py`
+   (que devuelve `list[Command]`).
+2. Si necesita una libreria externa, aislarla en un modulo propio (por ejemplo
+   `playback.py`) y recibirla como funcion en `commands.py`.
+3. Agregar su comando a la lista de `build_router()` en `app/router.py`, en el
+   orden de prioridad que corresponda.
+4. Cubrirlo en `tests/`: los comandos no dependen de la libreria, asi que los
+   tests no la necesitan.
 
 ---
 
