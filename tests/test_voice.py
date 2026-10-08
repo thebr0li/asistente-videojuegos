@@ -4,13 +4,36 @@ Se prueban los metodos de `VoiceService` con un motor falso, asi que los tests
 no necesitan pyttsx3 ni un sistema de sonido.
 """
 
+import io
+import time
 import unittest
+from contextlib import redirect_stdout
 
 
 class FakeVoiceEntry:
     def __init__(self, voice_id: str, languages: tuple[str, ...] = ()) -> None:
         self.id = voice_id
         self.languages = languages
+
+
+class FakeSynth:
+    """Sintetizador de macOS: `isSpeaking` da True durante el speak."""
+
+    def __init__(self, segundos: float = 0.2) -> None:
+        self.seconds = segundos
+        self.spoken: list[str] = []
+        self._hablando = False
+
+    def startSpeakingString_(self, text: str) -> None:
+        self.spoken.append(text)
+        self._hablando = True
+
+    def isSpeaking(self) -> bool:
+        if not self._hablando:
+            return False
+        time.sleep(self.seconds)
+        self._hablando = False
+        return True
 
 
 class FakeEngine:
@@ -22,6 +45,7 @@ class FakeEngine:
         self._rejects = rejects
         self._pending: list[str] = []
         self._active = ""
+        self.spoken: list[str] = []
 
     def getProperty(self, name: str):
         if name == "voices":
@@ -41,11 +65,12 @@ class FakeEngine:
             self._active = self._pending.pop(0)
 
 
-def build_service(voices: tuple[str, ...] = (), rejects: tuple[str, ...] = ()):
+def build_service(voices: tuple[str, ...] = (), rejects: tuple[str, ...] = (), synth=None):
     from shared.voice import VoiceService
 
     service = VoiceService.__new__(VoiceService)
     service._engine = FakeEngine(voices, rejects)
+    service._synth = synth
     return service
 
 
@@ -137,6 +162,56 @@ class VoiceSelectionTest(unittest.TestCase):
         service._engine = engine
 
         self.assertEqual(service._available_voices(("com.apple.voice.compact.es-ES.Ausente",)), ())
+
+
+class SpeakTest(unittest.TestCase):
+    """`say` tiene que esperar a que el sintetizador termine.
+
+    Regresion del bug de pyttsx3 en macOS: `runAndWait()` solo bombea el run
+    loop de AppKit la primera vez, asi que las siguientes volucan al instante y
+    el microfono se abria antes de que terminara la respuesta.
+    """
+
+    def test_en_macos_usa_el_sintetizador_y_no_runandwait(self):
+        synth = FakeSynth()
+        service = build_service(synth=synth)
+
+        with redirect_stdout(io.StringIO()):
+            service.say("Hola")
+
+        self.assertEqual(synth.spoken, ["Hola"])
+
+    def test_espera_a_que_termine_de_speaking(self):
+        synth = FakeSynth(segundos=0.2)
+        service = build_service(synth=synth)
+
+        t0 = time.perf_counter()
+        with redirect_stdout(io.StringIO()):
+            service.say("Hola")
+        waited = time.perf_counter() - t0
+
+        self.assertGreater(waited, synth.seconds)
+
+    def test_no_usa_runandwait_cuando_hay_sintetizador(self):
+        synth = FakeSynth(segundos=0.0)
+        service = build_service(synth=synth)
+        service._engine.runAndWait = lambda: self.fail("no debe usar runAndWait en macOS")
+
+        with redirect_stdout(io.StringIO()):
+            service.say("Hola")
+
+    def test_en_otros_sistemas_usa_el_motor(self):
+        service = build_service()
+        service._engine.runAndWait = lambda: service._engine.runAndWait.calls.append(1)
+        service._engine.runAndWait.calls = []
+        spoken = []
+        service._engine.say = spoken.append
+
+        with redirect_stdout(io.StringIO()):
+            service.say("Hola")
+
+        self.assertEqual(spoken, ["Hola"])
+        self.assertEqual(len(service._engine.runAndWait.calls), 1)
 
 
 if __name__ == "__main__":

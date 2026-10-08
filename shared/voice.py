@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import time
 from collections.abc import Iterable
 from typing import Any, cast
 
@@ -20,6 +22,21 @@ VOICE_CANDIDATES = (
     "com.apple.eloquence.es-ES.Shelley",
 )
 SPANISH_PREFIX = "es"
+POLL_SECONDS = 0.05
+VOICE_PROBE = "."
+
+
+def macos_synthesizer(engine: Any) -> Any | None:
+    """El sintetizador de macOS del motor, o None en otros sistemas.
+
+    El driver de pyttsx3 solo bombea el run loop de AppKit en la primera
+    llamada a `runAndWait()`. Despues vuelve al instante, asi que hay que hablar
+    y esperar a mano para que la respuesta no se corte.
+    """
+    if sys.platform != "darwin":
+        return None
+    driver = getattr(engine.__dict__.get("proxy"), "_driver", None)
+    return getattr(driver, "_tts", None)
 
 
 class VoiceService:
@@ -37,6 +54,7 @@ class VoiceService:
         self._language = language
         self._recognizer = sr.Recognizer()
         self._recognizer.pause_threshold = PAUSE_THRESHOLD
+        self._synth = macos_synthesizer(self._engine)
         self.voice_id = self._select_spanish_voice(voice_ids)
 
     def _select_spanish_voice(self, voice_ids: tuple[str, ...]) -> str | None:
@@ -49,15 +67,22 @@ class VoiceService:
         """Prende la voz y verifica que el motor la tome.
 
         `setProperty` encola el comando: la voz recien queda activa despues de
-        procesar la cola, asi que hay que hablar una vez para que se aplique.
+        hablar, asi que se prueba con una frase corta.
         """
         try:
             self._engine.setProperty("voice", voice_id)
-            self._engine.say("")
+            self._engine.say(VOICE_PROBE)
             self._engine.runAndWait()
             return self._engine.getProperty("voice") == voice_id
         except Exception:
             return False
+
+    def _wait_for_speech(self) -> None:
+        """Espera a que el sintetizador termine, para no cortar la respuesta."""
+        if self._synth is None:
+            return
+        while self._synth.isSpeaking():
+            time.sleep(POLL_SECONDS)
 
     def _installed_voices(self) -> tuple[str, ...]:
         voices = cast(Iterable[Any], self._engine.getProperty("voices") or ())
@@ -78,9 +103,21 @@ class VoiceService:
         return any(str(language).startswith(SPANISH_PREFIX) for language in languages)
 
     def say(self, message: str) -> None:
+        """Habla el mensaje y espera a que termine.
+
+        En macOS no se usa `runAndWait()`: el driver vuelve al instante y la
+        respuesta se corta. Se habla con el sintetizador y se espera a que
+        termine antes de abrir el microfono de nuevo.
+        """
         print("Asistente:", message)
-        self._engine.say(message)
-        self._engine.runAndWait()
+        if self._synth is None:
+            self._engine.say(message)
+            self._engine.runAndWait()
+            return
+
+        self._synth.startSpeakingString_(message)
+        while self._synth.isSpeaking():
+            time.sleep(POLL_SECONDS)
 
     def listen(self) -> str | None:
         """Escucha una frase y la transcribe, o devuelve None si no la entendio."""
