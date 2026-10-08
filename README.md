@@ -28,7 +28,8 @@ El proyecto usa exclusivamente las librerias de la consigna: `pyttsx3`,
 
 ## Requisitos
 
-- **Sistema operativo**: Windows (la voz de `pyttsx3` usa las voces SAPI5 de Windows).
+- **Sistema operativo**: Windows (usa la voz SAPI5 `TTS_MS_ES-ES_HELENA_11.0`) o
+  macOS (usa una voz en espanol del sistema como plan B).
 - **Python**: 3.10 o superior (probado en 3.12).
 - **Microfono** conectado y funcionando.
 - **Conexion a internet**: necesaria para el reconocimiento de voz, Wikipedia,
@@ -66,19 +67,35 @@ El proyecto usa exclusivamente las librerias de la consigna: `pyttsx3`,
 
 ### Si PyAudio falla al instalar
 
-`PyAudio` es necesario para leer el microfono. En Windows normalmente instala con
-`pip`, pero si da error proba:
+`PyAudio` es necesario para leer el microfono y siempre compila desde el codigo
+fuente.
+
+**En macOS** hace falta `portaudio` y, con el SDK de Xcode 27, hay que apuntar a un
+SDK anterior porque el linker no reconoce las arquitecturas `arm64e`:
+
+```
+brew install portaudio
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+MACOSX_DEPLOYMENT_TARGET=13.0 \
+pip install "PyAudio==0.2.14"
+```
+
+**En Windows** normalmente instala con `pip`. Si falla:
 
 ```
 pip install pipwin
 pipwin install pyaudio
 ```
 
-o descarga el archivo `.whl` correspondiente a tu version de Python desde
-https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio y luego:
+o descarga el `.whl` de https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio
+
+### Si `pip install` se corta y no instala nada
+
+`pip` aborta **todas** las dependencias cuando una falla. Si PyAudio no compila,
+las otras librerias tampoco se instalan. Instalas por partes:
 
 ```
-pip install pyaudio‑0.2.14‑cp312‑cp312‑win_amd64.whl
+pip install pyttsx3 SpeechRecognition pywhatkit yfinance pyjokes wikipedia
 ```
 
 ---
@@ -307,7 +324,11 @@ En `features/stocks/commands.py`, dentro de `TICKERS`, agrega la empresa:
 
 - **"No pude buscar en wikipedia en este momento"**: Wikipedia limita la cantidad de
   peticiones seguidas (error 429). Espera unos segundos y volve a intentar.
-- **No se escucha la voz**: revisa el volumen de Windows y que la voz
-  `TTS_MS_ES-ES_HELENA_11.0` este instalada (Configuracion > Hora e idioma > Voz).
+- **No se escucha la voz**: en Windows revisa que la voz `TTS_MS_ES-ES_HELENA_11.0`
+  este instalada (Configuracion > Hora e idioma > Voz). En macOS el asistente
+  elige sola una voz en espanol del sistema; para ver cual usa, corré
+  `python -c "from shared.voice import VoiceService; print(VoiceService().voice_id)"`.
+- **Habla en ingles en macOS**: no hay ninguna voz en espanol instalada. Descarga
+  una desde Ajustes > Accesibilidad > Contenido hablado > Voces del sistema.
 - **No reconoce la voz**: revisa el microfono, el idioma (espanol) y la conexion a
   internet (el reconocimiento usa Google).
