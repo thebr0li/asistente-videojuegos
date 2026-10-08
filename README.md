@@ -202,6 +202,13 @@ requirements.txt
 README.md
 ```
 
+### Documentacion
+
+| Documento | Que explica |
+|---|---|
+| [docs/arquitectura.md](docs/arquitectura.md) | Ruta de lectura del proyecto, responsabilidades y diagramas |
+| [docs/conceptos.md](docs/conceptos.md) | Glosario: `Callable`, el asterisco de las listas, `Session` vs `Context`, inyeccion de dependencias |
+
 ### Responsabilidades
 
 | Parte | Que hace | Que no hace |

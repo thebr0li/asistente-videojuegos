@@ -1,8 +1,11 @@
 # Arquitectura del Asistente de Videojuegos
 
-Guía de lectura del código
+Guía de lectura del código, pensada para entender el proyecto de punta a punta y
+poder explicarlo después.
 
----
+> **¿Qué significa cada pieza?** Para `Callable`, el asterisco de `build_router`,
+> la diferencia entre `Session` y `Context`, y la inyección de dependencias, ver
+> [conceptos.md](conceptos.md).
 
 ## La regla
 
